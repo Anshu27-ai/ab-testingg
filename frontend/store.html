@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Acme Store | Live Production Demo</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col items-center justify-center p-6">
+  
+  <div class="max-w-lg w-full bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-6">
+    <div class="border-b border-slate-800 pb-4 flex justify-between items-center">
+      <div>
+        <span class="text-xs uppercase tracking-wider text-emerald-400 font-bold">Client Storefront</span>
+        <h1 class="text-2xl font-bold text-white mt-0.5">Order Checkout</h1>
+        <p class="text-xs text-slate-400">Total: $120.00 USD</p>
+      </div>
+      <button onclick="switchUser()" class="text-xs bg-slate-800 hover:bg-slate-700 border border-slate-700 px-3 py-2 rounded-lg text-slate-200 transition">
+        🔀 Switch Visitor
+      </button>
+    </div>
+
+    <!-- Active User -->
+    <div class="flex items-center justify-between bg-slate-950 px-4 py-2.5 rounded-lg border border-slate-800 text-xs">
+      <span class="text-slate-400">Current User ID:</span>
+      <span id="userIdDisplay" class="font-mono font-bold text-sky-400">user_101</span>
+    </div>
+
+    <!-- 1. FEATURE FLAG DEMO (Kill Switch) -->
+    <div class="space-y-2">
+      <div class="flex justify-between items-center text-xs">
+        <span class="font-bold text-slate-300 uppercase tracking-wide">1. Feature Flag: <span class="font-mono text-emerald-400">checkout_v2</span></span>
+        <span id="flagStatusBadge" class="text-[10px] px-2 py-0.5 rounded font-mono bg-slate-800 text-slate-400">Checking...</span>
+      </div>
+      
+      <div id="flagBox" class="p-4 rounded-xl border border-slate-800 bg-slate-950 transition-all">
+        <div id="flagContent" class="space-y-2"></div>
+      </div>
+    </div>
+
+    <!-- 2. A/B EXPERIMENT DEMO (Green vs Grey Buttons) -->
+    <div class="space-y-2 pt-2 border-t border-slate-800">
+      <div class="flex justify-between items-center text-xs">
+        <span class="font-bold text-slate-300 uppercase tracking-wide">2. A/B Test: <span class="font-mono text-sky-400">cta_color</span></span>
+        <span id="abVariantBadge" class="text-[10px] px-2 py-0.5 rounded font-mono bg-slate-800 text-slate-300">Evaluating...</span>
+      </div>
+
+      <div class="p-4 rounded-xl border border-slate-800 bg-slate-950 space-y-3">
+        <p class="text-xs text-slate-400">Button rendered based on A/B test variant:</p>
+        <div id="abButtonContainer"></div>
+        <div id="conversionMessage" class="hidden text-center text-xs font-semibold text-emerald-400 bg-emerald-950/40 border border-emerald-800/60 p-2 rounded-lg">
+          ✅ Conversion fired to database! Check index.html telemetry.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let currentUserId = "user_101";
+
+    function switchUser() {
+      const randomNum = Math.floor(Math.random() * 900) + 100;
+      currentUserId = `user_${randomNum}`;
+      document.getElementById("userIdDisplay").innerText = currentUserId;
+      document.getElementById("conversionMessage").classList.add("hidden");
+      evaluateBoth();
+    }
+
+    async function evaluateBoth() {
+      evaluateFlag();
+      evaluateABTest();
+    }
+
+    async function evaluateFlag() {
+      const box = document.getElementById("flagBox");
+      const content = document.getElementById("flagContent");
+      const badge = document.getElementById("flagStatusBadge");
+
+      try {
+        const res = await fetch(`http://127.0.0.1:8000/api/eval/checkout_v2?user_id=${currentUserId}`);
+        if (!res.ok) {
+          badge.innerText = "Flag Missing";
+          badge.className = "text-[10px] px-2 py-0.5 rounded font-mono bg-red-950 text-red-400 border border-red-800";
+          content.innerHTML = `<div class="text-xs text-slate-400">Create 'checkout_v2' in the dashboard.</div>`;
+          return;
+        }
+        const data = await res.json();
+
+        if (data.enabled) {
+          badge.innerText = "FLAG ACTIVE (1-Click On)";
+          badge.className = "text-[10px] px-2 py-0.5 rounded font-mono bg-emerald-950 text-emerald-400 border border-emerald-800";
+          box.className = "p-4 rounded-xl border border-emerald-500/50 bg-emerald-950/20";
+          content.innerHTML = `
+            <div class="text-emerald-400 text-xs font-bold uppercase flex items-center gap-1.5">
+              <span class="h-2 w-2 rounded-full bg-emerald-400 animate-pulse"></span>
+              Express Apple Pay Enabled
+            </div>
+            <p class="text-xs text-slate-300">1-Click instant checkout is active.</p>
+          `;
+        } else {
+          badge.innerText = "KILL-SWITCH OFF";
+          badge.className = "text-[10px] px-2 py-0.5 rounded font-mono bg-slate-800 text-slate-400";
+          box.className = "p-4 rounded-xl border border-slate-800 bg-slate-950";
+          content.innerHTML = `
+            <div class="text-slate-400 text-xs font-semibold uppercase">Fallback: Standard Form Active</div>
+            <p class="text-xs text-slate-500">Feature killed/disabled globally from dashboard.</p>
+          `;
+        }
+      } catch (err) {
+        badge.innerText = "Backend Offline";
+      }
+    }
+
+    async function evaluateABTest() {
+      const container = document.getElementById("abButtonContainer");
+      const badge = document.getElementById("abVariantBadge");
+
+      try {
+        const res = await fetch(`http://127.0.0.1:8000/api/decision/cta_color?user_id=${currentUserId}`);
+        if (!res.ok) {
+          badge.innerText = "Exp Missing";
+          container.innerHTML = `<div class="text-xs text-slate-400">Experiment 'cta_color' not found. Launch it in index.html first.</div>`;
+          return;
+        }
+        const data = await res.json();
+        const variant = data.variant;
+
+        badge.innerText = `Variant: ${variant}`;
+
+        if (variant === "variant_green") {
+          // HERE IS THE BRIGHT GREEN BUTTON
+          container.innerHTML = `
+            <button onclick="recordConversion()" class="w-full py-3 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold rounded-xl text-sm shadow-lg shadow-emerald-500/20 transition">
+              🟢 Complete Order ($120) &bull; [Variant: Green CTA]
+            </button>
+          `;
+        } else {
+          // HERE IS THE GREY BUTTON (Control)
+          container.innerHTML = `
+            <button onclick="recordConversion()" class="w-full py-2.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-semibold rounded-lg text-sm transition">
+              ⚪ Complete Order ($120) &bull; [Variant: Control Standard]
+            </button>
+          `;
+        }
+      } catch (err) {
+        badge.innerText = "Backend Offline";
+      }
+    }
+
+    async function recordConversion() {
+      try {
+        await fetch("http://127.0.0.1:8000/api/events", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            experiment_key: "cta_color",
+            user_id: currentUserId,
+            event_type: "conversion"
+          })
+        });
+        document.getElementById("conversionMessage").classList.remove("hidden");
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    evaluateBoth();
+    setInterval(evaluateFlag, 2000);
+  </script>
+</body>
+</html>

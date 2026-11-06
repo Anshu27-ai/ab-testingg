@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Testify | Flags & A/B Engine</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const API = "http://127.0.0.1:8000/api";
+
+    function App() {
+      const [view, setView] = React.useState("flags"); // 'flags' or 'experiments'
+      const [flags, setFlags] = React.useState([]);
+      const [experiments, setExperiments] = React.useState([]);
+      const [metrics, setMetrics] = React.useState({ flags_count: 0, experiments_count: 0, total_events: 0 });
+      const [error, setError] = React.useState("");
+
+      // Flag Form
+      const [flagKey, setFlagKey] = React.useState("");
+      const [flagDesc, setFlagDesc] = React.useState("");
+      const [rollout, setRollout] = React.useState(100);
+
+      // Experiment Form
+      const [expKey, setExpKey] = React.useState("");
+      const [expName, setExpName] = React.useState("");
+      const [expVariants, setExpVariants] = React.useState("control, treatment_a");
+
+      // Simulator
+      const [simUser, setSimUser] = React.useState("user_42");
+      const [simExp, setSimExp] = React.useState("");
+      const [simResult, setSimResult] = React.useState(null);
+
+      const refreshAll = async () => {
+        try {
+          const [fRes, eRes, mRes] = await Promise.all([
+            fetch(`${API}/flags`),
+            fetch(`${API}/experiments`),
+            fetch(`${API}/metrics`)
+          ]);
+          if (fRes.ok) setFlags(await fRes.json());
+          if (eRes.ok) setExperiments(await eRes.json());
+          if (mRes.ok) setMetrics(await mRes.json());
+        } catch (err) {
+          setError("Failed to fetch data. Is the backend server running?");
+        }
+      };
+
+      React.useEffect(() => {
+        refreshAll();
+      }, []);
+
+      // Flag Handlers
+      const createFlag = async (e) => {
+        e.preventDefault();
+        setError("");
+        const res = await fetch(`${API}/flags`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ key: flagKey, description: flagDesc, rollout_percentage: Number(rollout) })
+        });
+        if (!res.ok) return setError((await res.json()).detail);
+        setFlagKey(""); setFlagDesc(""); setRollout(100);
+        refreshAll();
+      };
+
+      const toggleFlag = async (f) => {
+        await fetch(`${API}/flags/${f.key}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ is_enabled: !f.is_enabled })
+        });
+        refreshAll();
+      };
+
+      const deleteFlag = async (key) => {
+        await fetch(`${API}/flags/${key}`, { method: "DELETE" });
+        refreshAll();
+      };
+
+      // Experiment Handlers
+      const createExp = async (e) => {
+        e.preventDefault();
+        setError("");
+        const res = await fetch(`${API}/experiments`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            key: expKey,
+            name: expName,
+            variants: expVariants.split(",").map(v => v.trim())
+          })
+        });
+        if (!res.ok) return setError((await res.json()).detail);
+        setExpKey(""); setExpName("");
+        refreshAll();
+      };
+
+      const toggleExpStatus = async (exp) => {
+        const nextStatus = exp.status === "running" ? "paused" : "running";
+        await fetch(`${API}/experiments/${exp.key}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: nextStatus })
+        });
+        refreshAll();
+      };
+
+      const deleteExp = async (key) => {
+        await fetch(`${API}/experiments/${key}`, { method: "DELETE" });
+        refreshAll();
+      };
+
+      // Simulation & Telemetry
+      const evaluateUser = async () => {
+        if (!simExp) return;
+        const res = await fetch(`${API}/decision/${simExp}?user_id=${encodeURIComponent(simUser)}`);
+        if (res.ok) setSimResult(await res.json());
+        refreshAll();
+      };
+
+      const trackConversion = async () => {
+        if (!simExp) return;
+        await fetch(`${API}/events`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ experiment_key: simExp, user_id: simUser, event_type: "conversion" })
+        });
+        refreshAll();
+      };
+
+      return (
+        <div className="max-w-6xl mx-auto px-6 py-8">
+          {/* Header */}
+          <div className="flex flex-col md:flex-row md:items-center justify-between pb-6 border-b border-slate-800 gap-4">
+            <div>
+              <h1 className="text-3xl font-extrabold text-emerald-400">Testify</h1>
+              <p className="text-sm text-slate-400">Feature Flagging & Deterministic A/B Experiments Engine</p>
+            </div>
+            <div className="flex gap-4">
+              <div className="bg-slate-900 border border-slate-800 px-4 py-2 rounded-xl text-center">
+                <span className="block text-2xl font-bold text-white">{metrics.flags_count}</span>
+                <span className="text-xs text-slate-400">Flags</span>
+              </div>
+              <div className="bg-slate-900 border border-slate-800 px-4 py-2 rounded-xl text-center">
+                <span className="block text-2xl font-bold text-emerald-400">{metrics.experiments_count}</span>
+                <span className="text-xs text-slate-400">Running A/B</span>
+              </div>
+              <div className="bg-slate-900 border border-slate-800 px-4 py-2 rounded-xl text-center">
+                <span className="block text-2xl font-bold text-sky-400">{metrics.total_events}</span>
+                <span className="text-xs text-slate-400">Total Telemetry</span>
+              </div>
+            </div>
+          </div>
+
+          {error && (
+            <div className="my-4 p-3 bg-red-950 border border-red-800 text-red-300 text-sm rounded-lg flex justify-between">
+              <span>{error}</span>
+              <button onClick={() => setError("")} className="font-bold">&times;</button>
+            </div>
+          )}
+
+          {/* Navigation Bar */}
+          <div className="flex gap-4 mt-6 border-b border-slate-800 pb-2">
+            <button
+              onClick={() => setView("flags")}
+              className={`pb-2 px-3 text-sm font-semibold transition ${view === "flags" ? "border-b-2 border-emerald-500 text-emerald-400" : "text-slate-400 hover:text-white"}`}
+            >
+              Feature Flags
+            </button>
+            <button
+              onClick={() => setView("experiments")}
+              className={`pb-2 px-3 text-sm font-semibold transition ${view === "experiments" ? "border-b-2 border-emerald-500 text-emerald-400" : "text-slate-400 hover:text-white"}`}
+            >
+              A/B Experiments
+            </button>
+          </div>
+
+          {/* VIEW: FEATURE FLAGS */}
+          {view === "flags" && (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mt-6">
+              <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl h-fit">
+                <h3 className="font-semibold text-lg text-white mb-4">+ Create Flag</h3>
+                <form onSubmit={createFlag} className="space-y-4">
+                  <input
+                    type="text"
+                    required
+                    placeholder="Flag Key (e.g. new_checkout)"
+                    value={flagKey}
+                    onChange={(e) => setFlagKey(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500"
+                  />
+                  <input
+                    type="text"
+                    placeholder="Description"
+                    value={flagDesc}
+                    onChange={(e) => setFlagDesc(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500"
+                  />
+                  <div>
+                    <div className="flex justify-between text-xs text-slate-400 mb-1">
+                      <span>Rollout Target</span>
+                      <span className="font-bold text-emerald-400">{rollout}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      value={rollout}
+                      onChange={(e) => setRollout(e.target.value)}
+                      className="w-full accent-emerald-500"
+                    />
+                  </div>
+                  <button type="submit" className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 rounded-lg font-semibold text-sm transition">
+                    Save Flag
+                  </button>
+                </form>
+              </div>
+
+              <div className="lg:col-span-2 space-y-3">
+                {flags.length === 0 ? (
+                  <div className="bg-slate-900 border border-slate-800 p-8 rounded-2xl text-center text-slate-500 text-sm">
+                    No active feature flags.
+                  </div>
+                ) : (
+                  flags.map((f) => (
+                    <div key={f.id} className="bg-slate-900 border border-slate-800 p-4 rounded-xl flex items-center justify-between">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono font-semibold text-white">{f.key}</span>
+                          <span className="text-xs bg-slate-800 border border-slate-700 px-2 py-0.5 rounded text-slate-300">{f.rollout_percentage}%</span>
+                        </div>
+                        {f.description && <p className="text-xs text-slate-400 mt-1">{f.description}</p>}
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={() => toggleFlag(f)}
+                          className={`text-xs px-3 py-1 font-semibold rounded-md border ${f.is_enabled ? "bg-emerald-950 border-emerald-600 text-emerald-400" : "bg-slate-800 border-slate-700 text-slate-400"}`}
+                        >
+                          {f.is_enabled ? "ENABLED" : "DISABLED"}
+                        </button>
+                        <button onClick={() => deleteFlag(f.key)} className="text-slate-500 hover:text-red-400 font-bold px-1">&times;</button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* VIEW: A/B EXPERIMENTS */}
+          {view === "experiments" && (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mt-6">
+              <div className="space-y-6">
+                <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl">
+                  <h3 className="font-semibold text-lg text-white mb-4">+ New Experiment</h3>
+                  <form onSubmit={createExp} className="space-y-4">
+                    <input
+                      type="text"
+                      required
+                      placeholder="Experiment Key (e.g. pricing_v2)"
+                      value={expKey}
+                      onChange={(e) => setExpKey(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500"
+                    />
+                    <input
+                      type="text"
+                      required
+                      placeholder="Display Name"
+                      value={expName}
+                      onChange={(e) => setExpName(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500"
+                    />
+                    <div>
+                      <label className="block text-xs text-slate-400 mb-1">Variants (comma separated)</label>
+                      <input
+                        type="text"
+                        value={expVariants}
+                        onChange={(e) => setExpVariants(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500"
+                      />
+                    </div>
+                    <button type="submit" className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 rounded-lg font-semibold text-sm transition">
+                      Launch Experiment
+                    </button>
+                  </form>
+                </div>
+
+                {/* Live Simulation Testing Tool */}
+                <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl text-xs space-y-3">
+                  <h4 className="font-semibold text-slate-300 uppercase tracking-wide">Live Telemetry Simulator</h4>
+                  <input
+                    type="text"
+                    placeholder="User ID (e.g. user_88)"
+                    value={simUser}
+                    onChange={(e) => setSimUser(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 text-white"
+                  />
+                  <select
+                    value={simExp}
+                    onChange={(e) => setSimExp(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 text-white"
+                  >
+                    <option value="">Select Experiment...</option>
+                    {experiments.map(e => <option key={e.id} value={e.key}>{e.name} ({e.key})</option>)}
+                  </select>
+                  <div className="flex gap-2">
+                    <button onClick={evaluateUser} className="flex-1 bg-slate-800 hover:bg-slate-700 py-1.5 rounded font-semibold text-white">
+                      1. Evaluate & Expose
+                    </button>
+                    <button onClick={trackConversion} className="flex-1 bg-emerald-700 hover:bg-emerald-600 py-1.5 rounded font-semibold text-white">
+                      2. Fire Conversion
+                    </button>
+                  </div>
+                  {simResult && (
+                    <div className="p-2 bg-slate-950 border border-slate-800 rounded text-slate-300">
+                      Assigned Variant: <span className="font-mono text-emerald-400 font-bold">{simResult.variant}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Experiments List & Analytics */}
+              <div className="lg:col-span-2 space-y-4">
+                {experiments.length === 0 ? (
+                  <div className="bg-slate-900 border border-slate-800 p-8 rounded-2xl text-center text-slate-500 text-sm">
+                    No experiments created yet.
+                  </div>
+                ) : (
+                  experiments.map((e) => (
+                    <div key={e.id} className="bg-slate-900 border border-slate-800 p-5 rounded-xl space-y-4">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h4 className="font-bold text-white text-base">{e.name}</h4>
+                            <span className="font-mono text-xs text-slate-400">({e.key})</span>
+                          </div>
+                          <span className={`inline-block mt-1 text-[11px] px-2 py-0.5 rounded font-semibold ${e.status === 'running' ? 'bg-emerald-950 border border-emerald-700 text-emerald-400' : 'bg-slate-800 text-slate-400'}`}>
+                            {e.status.toUpperCase()}
+                          </span>
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => toggleExpStatus(e)}
+                            className="text-xs px-2.5 py-1 bg-slate-800 hover:bg-slate-700 rounded text-slate-300 font-medium"
+                          >
+                            {e.status === "running" ? "Pause" : "Resume"}
+                          </button>
+                          <button onClick={() => deleteExp(e.key)} className="text-slate-500 hover:text-red-400 font-bold px-1">&times;</button>
+                        </div>
+                      </div>
+
+                      {/* Variant Telemetry Table */}
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 pt-2">
+                        {e.variants.map((variant) => {
+                          const data = e.analytics[variant] || { exposures: 0, conversions: 0, rate: 0 };
+                          return (
+                            <div key={variant} className="bg-slate-950 border border-slate-800 p-3 rounded-lg">
+                              <span className="font-mono text-xs text-emerald-400 font-semibold">{variant}</span>
+                              <div className="mt-2 text-xl font-bold text-white">{data.rate}%</div>
+                              <div className="text-[11px] text-slate-500">
+                                {data.conversions} conv / {data.exposures} exp
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
